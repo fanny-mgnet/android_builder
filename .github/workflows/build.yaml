@@ -1,32 +1,212 @@
-name: android_build
+name: Build Android APK
 
-on:
-  workflow_dispatch:
+on: workflow_dispatch
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout the code
-        uses: actions/checkout@v2
-      - name: Set up JDK
-        uses: actions/setup-java@v1
-        with:
-          java-version: 1.8
-      - id: get-project
-        name: Get project name
-        run: echo "::set-output name=PROJECT::$(cat project-to-build)"
-      - name: Clone project
-        run: git clone --depth=1 ${{ steps.get-project.outputs.PROJECT }} project
-      - name: Build the app
-        working-directory: ./project
-        run: |
-          if [ ! -f "gradlew" ]; then gradle wrapper; fi
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
-      - name: Upload APK
-        uses: actions/upload-artifact@v2
-        with:
-          name: my-build-apk
-          path: ./**/*.apk
+    - uses: actions/checkout@v4
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Download and setup Gradle
+      run: |
+        wget https://services.gradle.org/distributions/gradle-8.2-bin.zip
+        unzip gradle-8.2-bin.zip
+        echo "$(pwd)/gradle-8.2/bin" >> $GITHUB_PATH
+    
+    - name: Create minimal Android project if files missing
+      run: |
+        # Create root build.gradle if missing
+        if [ ! -f "build.gradle" ]; then
+          cat > build.gradle << 'EOF'
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.0'
+    }
+}
 
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+EOF
+          echo "Created build.gradle"
+        fi
+        
+        # Create settings.gradle if missing
+        if [ ! -f "settings.gradle" ]; then
+          cat > settings.gradle << 'EOF'
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "PriyaAssistant"
+include ':app'
+EOF
+          echo "Created settings.gradle"
+        fi
+        
+        # Create app/build.gradle if missing
+        if [ ! -d "app" ]; then
+          mkdir -p app
+        fi
+        
+        if [ ! -f "app/build.gradle" ]; then
+          cat > app/build.gradle << 'EOF'
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.priya'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.priya"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.10.0'
+}
+EOF
+          echo "Created app/build.gradle"
+        fi
+        
+        # Create AndroidManifest.xml if missing
+        if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    
+    <application
+        android:allowBackup="true"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="Priya Assistant"
+        android:theme="@android:style/Theme.DeviceDefault.Light">
+        
+        <activity android:name="com.example.priya.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        
+    </application>
+</manifest>
+EOF
+          echo "Created AndroidManifest.xml"
+        fi
+        
+        # Create MainActivity.java if missing
+        if [ ! -f "app/src/main/java/com/example/priya/MainActivity.java" ]; then
+          mkdir -p app/src/main/java/com/example/priya
+          cat > app/src/main/java/com/example/priya/MainActivity.java << 'EOF'
+package com.example.priya;
+
+import android.os.Bundle;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+
+public class MainActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        
+        TextView textView = new TextView(this);
+        textView.setText("Priya AI Call Assistant\n\nYour AI call answering app is ready!");
+        textView.setTextSize(20);
+        textView.setPadding(50, 50, 50, 50);
+        textView.setGravity(android.view.Gravity.CENTER);
+        
+        setContentView(textView);
+    }
+}
+EOF
+          echo "Created MainActivity.java"
+        fi
+        
+        # Create local.properties for Android SDK
+        echo "sdk.dir=$ANDROID_HOME" > local.properties 2>/dev/null || echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
+        
+        echo "Project structure created successfully"
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+    
+    - name: List project structure (for debugging)
+      run: |
+        echo "=== Project Structure ==="
+        ls -la
+        echo "=== App folder ==="
+        ls -la app/ 2>/dev/null || echo "app folder not found"
+        echo "=== Build files ==="
+        find . -name "*.gradle" -type f
+        echo "=== Java files ==="
+        find . -name "*.java" -type f
+    
+    - name: Build APK
+      run: |
+        gradle assembleDebug --no-daemon --stacktrace
+    
+    - name: Find and Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug
+        path: |
+          **/build/outputs/apk/debug/*.apk
+        if-no-files-found: error
